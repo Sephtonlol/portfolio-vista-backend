@@ -6,7 +6,7 @@ import {
   register,
   user,
 } from "../controllers/accounts.controller.js";
-import { search } from "../controllers/browser.controller.js";
+import { search, searchImages } from "../controllers/browser.controller.js";
 
 const router = Router();
 
@@ -18,6 +18,7 @@ router.patch("/user", editProfile);
 router.patch("/edit-password", editPassword);
 
 // browser
-router.get("/browser/:q", search);
+router.get("/browser/search/:q", search);
+router.get("/browser/images/:q", searchImages);
 
 export default router;

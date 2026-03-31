@@ -1,7 +1,13 @@
 import { Request, Response } from "express";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { Result, SearchResponse } from "../interfaces/browser.interface.js";
+import type {
+  ImageResult,
+  ImagesResponse,
+  Result,
+  SearchResponse,
+} from "../interfaces/browser.interface.js";
+import puppeteer from "puppeteer";
 
 export const search = async (req: Request, res: Response) => {
   const query = req.params.q;
@@ -63,5 +69,57 @@ export const search = async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Search error:", err);
     res.status(500).json({ error: "Search failed" });
+  }
+};
+
+export const searchImages = async (req: Request, res: Response) => {
+  const query = req.params.q;
+  if (!query) return res.status(400).json({ error: "Missing query" });
+
+  try {
+    const browser = await puppeteer.launch({ headless: true });
+    const page = await browser.newPage();
+
+    await page.goto(
+      `https://www.bing.com/images/search?q=${encodeURIComponent(query as string)}`,
+      {
+        waitUntil: "networkidle2",
+      },
+    );
+
+    // Wait for the images to load
+    await page.waitForSelector(".mimg");
+
+    const results = await page.evaluate((): ImageResult[] => {
+      const imgs = Array.from(document.querySelectorAll(".iusc"));
+      return imgs
+        .map((el) => {
+          try {
+            const data = JSON.parse(el.getAttribute("m")!);
+            return {
+              title: data.t,
+              image: data.murl,
+              thumbnail: data.turl,
+              source: data.purl,
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter((r): r is ImageResult => r !== null);
+    });
+
+    await browser.close();
+
+    const payload: ImagesResponse = {
+      success: true,
+      query: query as string,
+      results,
+    };
+
+    res.json(payload);
+  } catch (err) {
+    console.error("Bing headless search error:", err);
+    res.status(500).json({ error: "Image search failed" });
   }
 };

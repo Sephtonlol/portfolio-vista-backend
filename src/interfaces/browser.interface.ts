@@ -11,3 +11,16 @@ export interface Result {
   site: string;
   favicon: string | null;
 }
+
+export interface ImagesResponse {
+  success: boolean;
+  query: string;
+  results?: ImageResult[];
+}
+
+export interface ImageResult {
+  title: string;
+  image: string;
+  thumbnail: string;
+  source: string;
+}
