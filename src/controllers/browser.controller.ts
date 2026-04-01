@@ -7,16 +7,8 @@ import type {
   Result,
   SearchResponse,
 } from "../interfaces/browser.interface.js";
-import puppeteer from "puppeteer";
-
-const getSingleQueryParam = (value: unknown): string | null => {
-  if (typeof value === "string") return value.trim() || null;
-  if (Array.isArray(value) && typeof value[0] === "string") {
-    const first = value[0].trim();
-    return first || null;
-  }
-  return null;
-};
+import { getBrowser } from "../utils/browser.utils.js";
+import { getSingleQueryParam } from "../utils/query.utils.js";
 
 export const search = async (req: Request, res: Response) => {
   const query = getSingleQueryParam(req.query.q);
@@ -41,15 +33,13 @@ export const search = async (req: Request, res: Response) => {
       const snippet = $(el).find(".result__snippet").text().trim();
       const site = $(el).find(".result__url").text().trim();
 
-      // 🔥 FIX: extract real URL from DuckDuckGo redirect
       if (link && link.includes("uddg=")) {
         const match = link.match(/uddg=([^&]+)/);
         if (match && match[1]) {
-          link = decodeURIComponent(match[1]); // <-- correctly extract the URL
+          link = decodeURIComponent(match[1]);
         }
       }
 
-      // ✅ Now favicon works
       let favicon: string | null = null;
       if (link) {
         try {
@@ -86,21 +76,30 @@ export const searchImages = async (req: Request, res: Response) => {
   if (!query) return res.status(400).json({ error: "Missing query" });
 
   try {
-    const browser = await puppeteer.launch({ headless: true });
+    const browser = await getBrowser();
     const page = await browser.newPage();
+
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const type = req.resourceType();
+      if (["image", "stylesheet", "font"].includes(type)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
 
     await page.goto(
       `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
       {
-        waitUntil: "networkidle2",
+        waitUntil: "domcontentloaded", // ✅ faster than networkidle2
       },
     );
 
-    // Wait for the images to load
-    await page.waitForSelector(".mimg");
+    await page.waitForSelector(".iusc");
 
     const results = await page.evaluate((): ImageResult[] => {
-      const imgs = Array.from(document.querySelectorAll(".iusc"));
+      const imgs = Array.from(document.querySelectorAll(".iusc")).slice(0, 30); // optional limit
       return imgs
         .map((el) => {
           try {
@@ -118,8 +117,7 @@ export const searchImages = async (req: Request, res: Response) => {
         .filter((r): r is ImageResult => r !== null);
     });
 
-    await browser.close();
-
+    await page.close();
     const payload: ImagesResponse = {
       success: true,
       query,
