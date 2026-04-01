@@ -18,7 +18,7 @@ router.patch("/user", editProfile);
 router.patch("/edit-password", editPassword);
 
 // browser
-router.get("/browser/search/:q", search);
-router.get("/browser/images/:q", searchImages);
+router.get("/browser/search", search);
+router.get("/browser/images", searchImages);
 
 export default router;

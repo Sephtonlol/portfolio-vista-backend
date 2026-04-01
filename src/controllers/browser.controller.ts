@@ -9,8 +9,17 @@ import type {
 } from "../interfaces/browser.interface.js";
 import puppeteer from "puppeteer";
 
+const getSingleQueryParam = (value: unknown): string | null => {
+  if (typeof value === "string") return value.trim() || null;
+  if (Array.isArray(value) && typeof value[0] === "string") {
+    const first = value[0].trim();
+    return first || null;
+  }
+  return null;
+};
+
 export const search = async (req: Request, res: Response) => {
-  const query = req.params.q;
+  const query = getSingleQueryParam(req.query.q);
   if (!query) return res.status(400).json({ error: "Missing query" });
 
   try {
@@ -62,7 +71,7 @@ export const search = async (req: Request, res: Response) => {
 
     const payload: SearchResponse = {
       success: true,
-      query: query as string,
+      query,
       results,
     };
     res.json(payload);
@@ -73,7 +82,7 @@ export const search = async (req: Request, res: Response) => {
 };
 
 export const searchImages = async (req: Request, res: Response) => {
-  const query = req.params.q;
+  const query = getSingleQueryParam(req.query.q);
   if (!query) return res.status(400).json({ error: "Missing query" });
 
   try {
@@ -81,7 +90,7 @@ export const searchImages = async (req: Request, res: Response) => {
     const page = await browser.newPage();
 
     await page.goto(
-      `https://www.bing.com/images/search?q=${encodeURIComponent(query as string)}`,
+      `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
       {
         waitUntil: "networkidle2",
       },
@@ -113,7 +122,7 @@ export const searchImages = async (req: Request, res: Response) => {
 
     const payload: ImagesResponse = {
       success: true,
-      query: query as string,
+      query,
       results,
     };
 
