@@ -7,7 +7,7 @@ import type {
   Result,
   SearchResponse,
 } from "../interfaces/browser.interface.js";
-import { getBrowser } from "../utils/browser.utils.js";
+import { getBrowser, restartBrowser } from "../utils/browser.utils.js";
 import { getSingleQueryParam } from "../utils/query.utils.js";
 
 export const search = async (req: Request, res: Response) => {
@@ -75,49 +75,78 @@ export const searchImages = async (req: Request, res: Response) => {
   const query = getSingleQueryParam(req.query.q);
   if (!query) return res.status(400).json({ error: "Missing query" });
 
-  try {
+  const isTransientPuppeteerError = (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    return (
+      /Target closed/i.test(message) ||
+      /Session closed/i.test(message) ||
+      /Protocol error/i.test(message) ||
+      /Browser has disconnected/i.test(message) ||
+      /Navigation failed because browser has disconnected/i.test(message) ||
+      /Connection closed/i.test(message)
+    );
+  };
+
+  const runSearch = async (): Promise<ImageResult[]> => {
     const browser = await getBrowser();
     const page = await browser.newPage();
+    try {
+      page.setDefaultNavigationTimeout(30_000);
+      page.setDefaultTimeout(30_000);
 
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      const type = req.resourceType();
-      if (["image", "stylesheet", "font"].includes(type)) {
-        req.abort();
-      } else {
-        req.continue();
+      await page.setRequestInterception(true);
+      page.on("request", (r) => {
+        const type = r.resourceType();
+        if (["image", "stylesheet", "font"].includes(type)) {
+          r.abort();
+        } else {
+          r.continue();
+        }
+      });
+
+      await page.goto(
+        `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
+        {
+          waitUntil: "domcontentloaded", // ✅ faster than networkidle2
+          timeout: 30_000,
+        },
+      );
+
+      await page.waitForSelector(".iusc", { timeout: 15_000 });
+
+      return await page.evaluate((): ImageResult[] => {
+        const imgs = Array.from(document.querySelectorAll(".iusc")).slice(
+          0,
+          30,
+        );
+        return imgs
+          .map((el) => {
+            try {
+              const data = JSON.parse(el.getAttribute("m")!);
+              return {
+                title: data.t,
+                image: data.murl,
+                thumbnail: data.turl,
+                source: data.purl,
+              };
+            } catch {
+              return null;
+            }
+          })
+          .filter((r): r is ImageResult => r !== null);
+      });
+    } finally {
+      try {
+        await page.close();
+      } catch {
+        // If Chromium crashed/disconnected, close() can throw; ignore.
       }
-    });
+    }
+  };
 
-    await page.goto(
-      `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
-      {
-        waitUntil: "domcontentloaded", // ✅ faster than networkidle2
-      },
-    );
+  try {
+    const results = await runSearch();
 
-    await page.waitForSelector(".iusc");
-
-    const results = await page.evaluate((): ImageResult[] => {
-      const imgs = Array.from(document.querySelectorAll(".iusc")).slice(0, 30); // optional limit
-      return imgs
-        .map((el) => {
-          try {
-            const data = JSON.parse(el.getAttribute("m")!);
-            return {
-              title: data.t,
-              image: data.murl,
-              thumbnail: data.turl,
-              source: data.purl,
-            };
-          } catch {
-            return null;
-          }
-        })
-        .filter((r): r is ImageResult => r !== null);
-    });
-
-    await page.close();
     const payload: ImagesResponse = {
       success: true,
       query,
@@ -126,6 +155,25 @@ export const searchImages = async (req: Request, res: Response) => {
 
     res.json(payload);
   } catch (err) {
+    if (isTransientPuppeteerError(err)) {
+      try {
+        console.warn(
+          "Transient Puppeteer error (likely sleep/disconnect). Restarting browser and retrying once...",
+        );
+        await restartBrowser();
+        const results = await runSearch();
+        const payload: ImagesResponse = {
+          success: true,
+          query,
+          results,
+        };
+        return res.json(payload);
+      } catch (err2) {
+        console.error("Bing headless search retry failed:", err2);
+        return res.status(500).json({ error: "Image search failed" });
+      }
+    }
+
     console.error("Bing headless search error:", err);
     res.status(500).json({ error: "Image search failed" });
   }

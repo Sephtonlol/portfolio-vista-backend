@@ -1,7 +1,6 @@
 import { Router } from "express";
 import {
   editPassword,
-  editProfile,
   login,
   register,
   user,
@@ -11,11 +10,10 @@ import { search, searchImages } from "../controllers/browser.controller.js";
 const router = Router();
 
 // account
-router.post("/login", login);
-router.post("/register", register);
-router.get("/user", user);
-router.patch("/user", editProfile);
-router.patch("/edit-password", editPassword);
+router.post("/auth/login", login);
+router.post("/auth/register", register);
+router.get("/auth/user", user);
+router.patch("/auth/edit-password", editPassword);
 
 // browser
 router.get("/browser/search", search);

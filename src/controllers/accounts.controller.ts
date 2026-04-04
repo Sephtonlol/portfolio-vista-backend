@@ -2,7 +2,6 @@ import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import { connectToDatabase } from "../db.js";
 import crypto from "crypto";
-import { isValidEmail } from "../utils/regex.utils.js";
 import { checkString } from "../utils/types.utils.js";
 import { User } from "../interfaces/user.interfaces.js";
 import { verifyToken } from "../utils/token.utils.js";
@@ -10,17 +9,7 @@ import { verifyToken } from "../utils/token.utils.js";
 const userCollection = "users";
 
 export const register = async (req: Request, res: Response) => {
-  const { name, surname, email, password, gender } = req.body;
-
-  if (!checkString(name))
-    return res
-      .status(422)
-      .json({ error: "Name is required and must be a string." });
-
-  if (!checkString(email) || !isValidEmail(email))
-    return res
-      .status(422)
-      .json({ error: "Email is required and must be a valid email address." });
+  const { password } = req.body;
 
   if (!checkString(password))
     return res
@@ -30,36 +19,22 @@ export const register = async (req: Request, res: Response) => {
   try {
     const db = await connectToDatabase();
 
-    const userExist = await db
-      .collection(userCollection)
-      .findOne({ "user.name": name, "user.surname": surname });
-
-    const emailExist = await db
-      .collection(userCollection)
-      .findOne({ "user.email": email });
-
-    if (userExist)
-      return res
-        .status(419)
-        .json({ error: "A user with that name already exists." });
-
-    if (emailExist)
-      return res
-        .status(419)
-        .json({ error: "A user with that email already exists." });
+    const existingUser = await db.collection(userCollection).findOne({});
+    if (existingUser)
+      return res.status(409).json({
+        error: "A password is already set. Use /edit-password to change it.",
+      });
 
     const hash = await bcrypt.hash(password, 10);
 
     const user: User = {
-      name,
-      email,
       password: hash,
-      disabled: true,
+      disabled: false,
     };
 
     await db.collection(userCollection).insertOne({ user });
 
-    res.json({ message: "Gebruiker geregistreerd." });
+    res.json({ message: "Password registered." });
   } catch (error) {
     console.error("Error during registration:", error);
     res.status(500).json({ error: "An error occurred during registration." });
@@ -67,12 +42,7 @@ export const register = async (req: Request, res: Response) => {
 };
 
 export const login = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-
-  if (!checkString(email) || !isValidEmail(email))
-    return res
-      .status(422)
-      .json({ error: "Email is required and must be a valid email address." });
+  const { password } = req.body;
 
   if (!checkString(password))
     return res
@@ -82,16 +52,27 @@ export const login = async (req: Request, res: Response) => {
   try {
     const db = await connectToDatabase();
 
-    const result = await db
-      .collection(userCollection)
-      .findOne({ "user.email": email });
+    const cursor = db.collection(userCollection).find({});
+    let result: any | null = null;
 
-    if (!result) return res.status(404).json({ error: "User not found." });
-    if (result.user.disabled)
-      return res.status(403).json({ error: "Your account is disabled." });
+    for await (const doc of cursor) {
+      if (!doc?.user?.password) continue;
+      if (doc.user.disabled) continue;
+      const match = await bcrypt.compare(password, doc.user.password);
+      if (match) {
+        result = doc;
+        break;
+      }
+    }
 
-    const match = await bcrypt.compare(password, result.user.password);
-    if (!match) return res.status(422).json({ error: "Incorrect password." });
+    if (!result) {
+      const anyUser = await db.collection(userCollection).findOne({});
+      if (!anyUser)
+        return res.status(404).json({ error: "No password is set yet." });
+      if (anyUser.user?.disabled)
+        return res.status(403).json({ error: "Your account is disabled." });
+      return res.status(422).json({ error: "Incorrect password." });
+    }
     let token: string;
     let tokenCheckResult;
     do {
@@ -101,7 +82,7 @@ export const login = async (req: Request, res: Response) => {
         .findOne({ "user.token": token });
     } while (tokenCheckResult);
     await db.collection(userCollection).updateOne(
-      { "user.email": email },
+      { _id: result._id },
       {
         $set: {
           "user.token": token,
@@ -111,97 +92,13 @@ export const login = async (req: Request, res: Response) => {
     );
 
     res.json({
-      message: "Ingelogd.",
+      message: "Logged in.",
       token,
-      username: result.user.username,
       userId: result._id,
     });
   } catch (error) {
     console.error("Error during login:", error);
     res.status(500).json({ error: "An error occurred during login." });
-  }
-};
-
-export const editProfile = async (req: Request, res: Response) => {
-  try {
-    const verifiedUser = await verifyToken(req.headers.authorization);
-
-    if (!verifiedUser) {
-      return res.status(401).json({ error: "Invalid or expired token." });
-    }
-
-    const { name, surname, email, gender, password } = req.body;
-
-    const updateData: any = {};
-
-    if (name !== undefined) {
-      if (!checkString(name))
-        return res.status(422).json({ error: "Name must be a string." });
-
-      updateData["user.name"] = name;
-    }
-
-    if (surname !== undefined) {
-      if (!checkString(surname))
-        return res.status(422).json({ error: "Surname must be a string." });
-
-      updateData["user.surname"] = surname;
-    }
-
-    if (email !== undefined) {
-      if (!checkString(email) || !isValidEmail(email))
-        return res
-          .status(422)
-          .json({ error: "Email must be a valid email address." });
-
-      updateData["user.email"] = email;
-    }
-
-    if (gender !== undefined) {
-      if (gender !== "male" && gender !== "female" && gender !== null)
-        return res
-          .status(422)
-          .json({ error: "Gender must be 'male', 'female', or null." });
-
-      updateData["user.gender"] = gender;
-    }
-
-    if (!checkString(password))
-      return res
-        .status(422)
-        .json({ error: "Password is required and must be a string." });
-
-    if (Object.keys(updateData).length === 0)
-      return res
-        .status(422)
-        .json({ error: "No valid fields provided to update." });
-
-    const db = await connectToDatabase();
-
-    const user = await db
-      .collection(userCollection)
-      .findOne({ _id: verifiedUser._id });
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found." });
-    }
-
-    const passwordMatch = await bcrypt.compare(password, user.user.password);
-
-    if (!passwordMatch) {
-      return res.status(401).json({ error: "Incorrect password." });
-    }
-
-    await db
-      .collection(userCollection)
-      .updateOne({ _id: verifiedUser._id }, { $set: updateData });
-
-    return res.json({ message: "Profiel succesvol bijgewerkt." });
-  } catch (error) {
-    console.error("Error updating profile:", error);
-    return res.status(500).json({
-      error: "An error occurred while updating the profile.",
-    });
   }
 };
 
@@ -262,7 +159,7 @@ export const editPassword = async (req: Request, res: Response) => {
         { $set: { "user.password": newHash } },
       );
 
-    return res.json({ message: "Password is wrong." });
+    return res.json({ message: "Password changed." });
   } catch (error) {
     console.error("Error updating password:", error);
     return res.status(500).json({

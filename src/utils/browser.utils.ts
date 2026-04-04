@@ -1,22 +1,60 @@
 import puppeteer from "puppeteer";
 
-let browserPromise: Promise<puppeteer.Browser> | null = null;
+let browser: puppeteer.Browser | null = null;
+let launchPromise: Promise<puppeteer.Browser> | null = null;
 
-export const getBrowser = async () => {
-  if (!browserPromise) {
-    browserPromise = puppeteer.launch({ headless: true });
-  }
-  return browserPromise;
+const attachBrowserEvents = (b: puppeteer.Browser) => {
+  b.once("disconnected", () => {
+    browser = null;
+    launchPromise = null;
+    console.warn(
+      "Puppeteer browser disconnected; will relaunch on next request",
+    );
+  });
 };
 
-const shutdown = async () => {
-  if (browserPromise) {
-    const browser = await browserPromise;
-    await browser.close();
+const launchBrowser = async () => {
+  const b = await puppeteer.launch({
+    headless: true,
+  });
+  attachBrowserEvents(b);
+  return b;
+};
+
+export const getBrowser = async (): Promise<puppeteer.Browser> => {
+  if (browser && browser.connected) return browser;
+
+  if (!launchPromise) {
+    launchPromise = launchBrowser().catch((err) => {
+      browser = null;
+      launchPromise = null;
+      throw err;
+    });
+  }
+
+  browser = await launchPromise;
+  return browser;
+};
+
+export const closeBrowser = async () => {
+  const b = browser;
+  browser = null;
+  launchPromise = null;
+  if (!b) return;
+
+  try {
+    await b.close();
     console.log("Browser closed");
+  } catch (err) {
+    console.warn("Failed to close browser cleanly:", err);
   }
 };
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-process.on("beforeExit", shutdown);
+export const restartBrowser = async () => {
+  await closeBrowser();
+  return getBrowser();
+};
+
+process.on("SIGINT", closeBrowser);
+process.on("SIGTERM", closeBrowser);
+process.on("beforeExit", closeBrowser);
