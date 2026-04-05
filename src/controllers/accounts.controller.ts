@@ -86,7 +86,6 @@ export const login = async (req: Request, res: Response) => {
       {
         $set: {
           "user.token": token,
-          "user.expiration": new Date(Date.now() + 60 * 60 * 1000),
         },
       },
     );
