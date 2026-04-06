@@ -16,6 +16,7 @@ const attachBrowserEvents = (b: puppeteer.Browser) => {
 const launchBrowser = async () => {
   const b = await puppeteer.launch({
     headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   attachBrowserEvents(b);
   return b;
