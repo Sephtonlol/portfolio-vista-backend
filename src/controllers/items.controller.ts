@@ -12,6 +12,19 @@ import {
   type FileNodeDoc,
   validateNodeFields,
 } from "../utils/items.utils.js";
+import {
+  extractZipEntries,
+  validateZipEntries,
+  savePresentationFile,
+  extractFilePathComponents,
+  getFileExtensionType,
+  getZipDisplayName,
+  saveZipAsset,
+  bufferToDataUrl,
+  MAX_DATA_URL_SIZE,
+  publicUrlToFilePath,
+} from "../utils/zip.utils.js";
+import fs from "fs";
 
 const itemsCollection = ITEMS_COLLECTION;
 
@@ -281,10 +294,42 @@ export const deleteItem = async (req: Request, res: Response) => {
 
     if (existing.type === "directory") {
       const ids = await collectSubtreeIds(db, existing._id, itemsCollection);
+
+      // Find all docs in subtree to remove any uploaded files from disk
+      const docs = (await db
+        .collection<FileNodeDoc>(itemsCollection)
+        .find({ _id: { $in: ids } })
+        .toArray()) as FileNodeDoc[];
+
+      for (const d of docs) {
+        if (d.url && typeof d.url === "string") {
+          const fp = publicUrlToFilePath(d.url);
+          if (fp && fs.existsSync(fp)) {
+            try {
+              fs.unlinkSync(fp);
+            } catch (err) {
+              console.error("Failed to delete file from disk:", fp, err);
+            }
+          }
+        }
+      }
+
       const result = await db
         .collection<FileNodeDoc>(itemsCollection)
         .deleteMany({ _id: { $in: ids } });
       return res.json({ deletedCount: result.deletedCount });
+    }
+
+    // Non-directory: delete any associated uploaded file from disk
+    if (existing.url && typeof existing.url === "string") {
+      const fp = publicUrlToFilePath(existing.url);
+      if (fp && fs.existsSync(fp)) {
+        try {
+          fs.unlinkSync(fp);
+        } catch (err) {
+          console.error("Failed to delete file from disk:", fp, err);
+        }
+      }
     }
 
     const result = await db
@@ -370,5 +415,189 @@ export const moveItem = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error moving item:", error);
     return res.status(500).json({ error: "Failed to move item." });
+  }
+};
+
+export const uploadFromZip = async (req: Request, res: Response) => {
+  // Get buffer from body - req.body will be a Buffer if content-type is application/octet-stream
+  const zipBuffer = req.body;
+
+  if (!Buffer.isBuffer(zipBuffer) || zipBuffer.length === 0) {
+    return res
+      .status(422)
+      .json({ error: "Zip file is required in request body" });
+  }
+
+  // Optional: get parentId from query or body
+  let parentId: string | null = null;
+  if (req.query?.parentId) {
+    parentId = String(req.query.parentId);
+  } else if (req.body?.parentId) {
+    parentId = String(req.body.parentId);
+  }
+
+  let parentObjectId: ObjectId | null = null;
+  if (parentId !== null) {
+    if (!checkObjectId(parentId)) {
+      return res
+        .status(422)
+        .json({ error: "parentId must be a valid ObjectId or null" });
+    }
+    parentObjectId = new ObjectId(parentId);
+  }
+
+  try {
+    // Extract zip entries
+    const { entries, error: extractError } = extractZipEntries(zipBuffer);
+    if (extractError) {
+      return res.status(422).json({ error: extractError });
+    }
+
+    // Validate all files are supported types
+    const { valid, error: validationError } = validateZipEntries(entries);
+    if (!valid) {
+      return res.status(422).json({ error: validationError });
+    }
+
+    const db = await connectToDatabase();
+
+    // If parentId is provided, verify it exists and is a directory
+    if (parentObjectId) {
+      const parent = await db
+        .collection<FileNodeDoc>(itemsCollection)
+        .findOne({ _id: parentObjectId });
+      if (!parent) {
+        return res.status(404).json({ error: "Parent folder not found." });
+      }
+      if (parent.type !== "directory") {
+        return res
+          .status(422)
+          .json({ error: "parentId must reference a directory." });
+      }
+    }
+
+    // Build a map of folder paths to their ObjectIds
+    const folderMap: Record<string, ObjectId> = {};
+    if (parentObjectId === null) {
+      folderMap[""] = null as any; // root
+    } else {
+      folderMap[""] = parentObjectId;
+    }
+
+    const now = new Date();
+    const createdItems: FileNodeDoc[] = [];
+
+    // Process entries: create directories first, then files
+    const directories = entries.filter((e) => e.isDirectory);
+    const files = entries.filter((e) => !e.isDirectory);
+
+    // Create all directories
+    for (const entry of directories) {
+      const { folderPath, fileName } = extractFilePathComponents(
+        entry.fileName,
+      );
+      const parentKey = folderPath;
+      const parentFolderId = folderMap[parentKey] ?? null;
+
+      const doc: Omit<FileNodeDoc, "_id"> = {
+        name: fileName,
+        type: "directory",
+        parentId: parentFolderId,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = await db
+        .collection<FileNodeDoc>(itemsCollection)
+        .insertOne(doc as any);
+
+      const created: FileNodeDoc = { _id: result.insertedId, ...(doc as any) };
+      createdItems.push(created);
+
+      // Add to folderMap for file insertion
+      const fullPath = entry.fileName.replace(/\/$/, "");
+      folderMap[fullPath] = result.insertedId;
+    }
+
+    // Create all files
+    for (const entry of files) {
+      const { folderPath, fileName } = extractFilePathComponents(
+        entry.fileName,
+      );
+      const parentKey = folderPath;
+      const parentFolderId = folderMap[parentKey] ?? null;
+
+      const fileType = entry.fileExtensionType;
+      const displayName = getZipDisplayName(fileName);
+
+      if (fileType === "unsupported") {
+        return res
+          .status(422)
+          .json({ error: `File type not supported: ${fileName}` });
+      }
+
+      const doc: Omit<FileNodeDoc, "_id"> = {
+        name: displayName,
+        type: fileType as any,
+        parentId: parentFolderId,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // Handle different file types
+      if (fileType === "md" && entry.content) {
+        try {
+          doc.content = entry.content.toString("utf-8");
+        } catch {
+          doc.content = "[Binary content]";
+        }
+      } else if (fileType === "url" && entry.content) {
+        // Save documents/presentations to server and expose a public URL
+        const saveResult = saveZipAsset(fileName, entry.content);
+        if (saveResult.success && saveResult.url) {
+          doc.url = saveResult.url;
+        } else {
+          console.error("Failed to save document file:", saveResult.error);
+          return res
+            .status(500)
+            .json({ error: "Failed to save document file" });
+        }
+      } else if (
+        (fileType === "png" || fileType === "mp4" || fileType === "mp3") &&
+        entry.content
+      ) {
+        try {
+          // Always save media files to disk and return a backend-served URL
+          const saveResult = saveZipAsset(fileName, entry.content);
+          if (saveResult.success && saveResult.url) {
+            doc.url = saveResult.url;
+          } else {
+            console.error("Failed to save media file:", saveResult.error);
+            return res.status(500).json({ error: "Failed to save media file" });
+          }
+        } catch (err) {
+          console.error("Failed to process media file:", err);
+          return res
+            .status(500)
+            .json({ error: "Failed to process media file" });
+        }
+      }
+
+      const result = await db
+        .collection<FileNodeDoc>(itemsCollection)
+        .insertOne(doc as any);
+
+      const created: FileNodeDoc = { _id: result.insertedId, ...(doc as any) };
+      createdItems.push(created);
+    }
+
+    return res.status(201).json({
+      message: `Successfully imported ${createdItems.length} items from zip`,
+      itemsCreated: createdItems.length,
+      items: createdItems.map(toApiNode),
+    });
+  } catch (error) {
+    console.error("Error uploading from zip:", error);
+    return res.status(500).json({ error: "Failed to upload from zip file." });
   }
 };

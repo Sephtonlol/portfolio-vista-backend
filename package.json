@@ -3,16 +3,17 @@
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
-"scripts": {
-  "start": "node src/app.js",
-  "dev": "tsx watch src/app.ts",
-  "build": "tsc"
-},
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "tsx watch src/app.ts",
+    "build": "tsc"
+  },
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
     "@types/express": "^5.0.6",
+    "adm-zip": "^0.5.17",
     "axios": "^1.14.0",
     "bcrypt": "^6.0.0",
     "cheerio": "^1.2.0",
@@ -24,6 +25,7 @@
     "puppeteer": "^24.40.0"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
     "dotenv": "^17.3.1",

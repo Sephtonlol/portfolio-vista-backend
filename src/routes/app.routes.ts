@@ -1,4 +1,5 @@
 import { Router } from "express";
+import express from "express";
 import {
   editPassword,
   login,
@@ -12,11 +13,21 @@ import {
   getFolderContents,
   moveItem,
   updateItem,
+  uploadFromZip,
 } from "../controllers/items.controller.js";
 import { requireAuth } from "../utils/auth.middleware.js";
 
 const router = Router();
 
+// Middleware for handling binary zip uploads
+const rawBinaryMiddleware = express.raw({
+  type: [
+    "application/octet-stream",
+    "application/zip",
+    "application/x-zip-compressed",
+  ],
+  limit: "100mb",
+});
 // account
 router.post("/auth/login", login);
 router.post("/auth/register", register);
@@ -29,6 +40,12 @@ router.get("/browser/images", searchImages);
 
 // items (file explorer)
 router.get("/items", getFolderContents);
+router.post(
+  "/items/upload-zip",
+  requireAuth,
+  rawBinaryMiddleware,
+  uploadFromZip,
+);
 router.post("/items", requireAuth, createItem);
 router.patch("/items/:id", requireAuth, updateItem);
 router.delete("/items/:id", requireAuth, deleteItem);
