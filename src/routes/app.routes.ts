@@ -42,8 +42,8 @@ router.get("/browser/images", searchImages);
 router.get("/items", getFolderContents);
 router.post(
   "/items/upload-zip",
-  requireAuth,
   rawBinaryMiddleware,
+  requireAuth,
   uploadFromZip,
 );
 router.post("/items", requireAuth, createItem);

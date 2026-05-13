@@ -45,3 +45,29 @@ What it does:
 
 - `pm2 startup` (follow instructions)
 - `pm2 save`
+
+## Nginx upload limit
+
+If the backend is behind nginx, set `client_max_body_size` high enough for the largest zip upload. A `413 Request Entity Too Large` means nginx rejected the request before Node/Express received it.
+
+Example server block settings:
+
+```nginx
+server {
+  client_max_body_size 100m;
+
+  location /api/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+```
+
+After updating nginx, reload it:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
