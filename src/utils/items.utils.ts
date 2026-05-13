@@ -98,11 +98,16 @@ export const validateNodeFields = (node: {
   }
 
   if (type === "shortcut") {
-    if (!checkString(shortcutTo) || !ObjectId.isValid(String(shortcutTo))) {
-      return { ok: false, error: "shortcutTo must be a valid item id." };
+    const hasValidId = checkString(shortcutTo) && ObjectId.isValid(String(shortcutTo));
+    const hasPath = checkString(content) && String(content).startsWith('/');
+
+    if (!hasValidId && !hasPath) {
+      return {
+        ok: false,
+        error: "shortcut must have a valid item id or a path starting with '/'.",
+      };
     }
-    if (content !== undefined)
-      return { ok: false, error: "Shortcut items cannot have content." };
+
     if (url !== undefined)
       return { ok: false, error: "Shortcut items cannot have url." };
     return { ok: true };

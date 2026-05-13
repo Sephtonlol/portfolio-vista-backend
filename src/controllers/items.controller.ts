@@ -101,8 +101,18 @@ export const createItem = async (req: Request, res: Response) => {
     doc.url = url;
   }
   const shortcutObjectId =
-    type === "shortcut" ? new ObjectId(String(shortcutTo)) : null;
+    type === "shortcut" && checkString(shortcutTo) && ObjectId.isValid(String(shortcutTo))
+      ? new ObjectId(String(shortcutTo))
+      : null;
   if (shortcutObjectId) doc.shortcutTo = shortcutObjectId;
+  // Allow path-style shortcuts stored in `content` (portable across clients)
+  if (
+    type === "shortcut" &&
+    typeof content === "string" &&
+    content.trim().startsWith("/")
+  ) {
+    doc.content = content.trim();
+  }
 
   try {
     const db = await connectToDatabase();
@@ -214,20 +224,36 @@ export const updateItem = async (req: Request, res: Response) => {
       $unset.content = "";
       $unset.shortcutTo = "";
     } else if (nextType === "shortcut") {
+      // Support either an ObjectId target (`shortcutTo`) or a portable path in `content`.
       if (shortcutTo !== undefined) {
         if (shortcutTo === null || shortcutTo === "") {
-          return res
-            .status(422)
-            .json({ error: "shortcutTo is required for shortcuts." });
-        }
-        if (!checkString(shortcutTo) || !ObjectId.isValid(String(shortcutTo))) {
+          // clear shortcutTo if explicitly set to empty
+          $unset.shortcutTo = "";
+        } else if (!checkString(shortcutTo) || !ObjectId.isValid(String(shortcutTo))) {
           return res
             .status(422)
             .json({ error: "shortcutTo must be a valid item id." });
+        } else {
+          $set.shortcutTo = new ObjectId(String(shortcutTo));
+          // if setting shortcutTo, clear any path content
+          $unset.content = "";
         }
-        $set.shortcutTo = new ObjectId(String(shortcutTo));
       }
-      $unset.content = "";
+
+      if (content !== undefined) {
+        if (content === null || content === "") {
+          $unset.content = "";
+        } else if (typeof content !== "string" || !content.startsWith("/")) {
+          return res
+            .status(422)
+            .json({ error: "content must be a path starting with '/' for shortcuts." });
+        } else {
+          $set.content = content;
+          // if setting a path, clear shortcutTo since path is the portable pointer
+          $unset.shortcutTo = "";
+        }
+      }
+
       $unset.url = "";
     } else if (nextType === "directory") {
       $unset.content = "";
