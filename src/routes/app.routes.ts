@@ -11,6 +11,7 @@ import {
   createItem,
   deleteItem,
   getFolderContents,
+  getItemById,
   moveItem,
   updateItem,
   uploadFromZip,
@@ -40,6 +41,7 @@ router.get("/browser/images", searchImages);
 
 // items (file explorer)
 router.get("/items", getFolderContents);
+router.get("/items/:id", getItemById);
 router.post(
   "/items/upload-zip",
   rawBinaryMiddleware,

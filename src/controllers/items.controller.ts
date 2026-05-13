@@ -57,6 +57,24 @@ export const getFolderContents = async (req: Request, res: Response) => {
   }
 };
 
+export const getItemById = async (req: Request, res: Response) => {
+  const id = String((req.params as any)?.id ?? "");
+  if (!checkObjectId(id)) return res.status(422).json({ error: "Invalid id." });
+
+  try {
+    const db = await connectToDatabase();
+    const doc = await db
+      .collection<FileNodeDoc>(itemsCollection)
+      .findOne({ _id: new ObjectId(id) });
+
+    if (!doc) return res.status(404).json({ error: "Item not found." });
+    return res.json(toApiNode(doc));
+  } catch (error) {
+    console.error("Error fetching item by id:", error);
+    return res.status(500).json({ error: "Failed to fetch item." });
+  }
+};
+
 export const createItem = async (req: Request, res: Response) => {
   const { name, type, parentId, content, url, shortcutTo } = req.body ?? {};
 
