@@ -30,6 +30,9 @@ app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 app.use("/uploads", express.static(path.resolve(PROJECT_ROOT, "uploads")));
 app.use("/public", express.static(path.resolve(PROJECT_ROOT, "public")));
 
+app.use("/api/uploads", express.static(path.resolve(PROJECT_ROOT, "uploads")));
+app.use("/api/public", express.static(path.resolve(PROJECT_ROOT, "public")));
+
 app.use("/api", router);
 
 app.listen(PORT, () => {
